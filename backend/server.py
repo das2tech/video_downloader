@@ -12,9 +12,11 @@ resolve a URL, we respond with a clear "unsupported" message.
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import re
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
 from pathlib import Path
@@ -22,9 +24,11 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlparse
 
 import httpx
+import imageio_ffmpeg
 import yt_dlp
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
@@ -230,23 +234,34 @@ async def _yt_extract(url: str) -> tuple[Optional[Dict[str, Any]], Optional[str]
     return await loop.run_in_executor(YT_EXECUTOR, _yt_extract_sync, url)
 
 
-async def _probe_xhamster_flag(url: str) -> Optional[str]:
+async def _probe_xhamster_flag(url: str) -> Optional[Dict[str, Any]]:
     """
-    XHamster (and its mirrors) embed a `window.initials = {...}` blob that
-    contains `videoEntity.isDownloadable`. When the site marks a video as
-    non-downloadable, that's an explicit "download disabled by the site"
-    signal we should honor — we don't try to break their obfuscation.
+    XHamster-specific extractor. yt-dlp's own extractor is currently broken
+    for many videos because it assumes a `title` field inside
+    `initials.videoModel` which the site no longer emits — so it never gets
+    to the decipher stage. We do the same job locally:
 
-    Returns a user-facing reason string when downloads are blocked, or None
-    if the flag can't be read (in which case the generic yt-dlp error stands).
+      1. Fetch the desktop HTML.
+      2. Parse `window.initials = {…}` from the page.
+      3. Honor `videoEntity.isDownloadable == False` — that's the site
+         explicitly saying "no downloads for this one".
+      4. Otherwise pull `xplayerSettings.sources.hls.h264.url`, run yt-dlp's
+         public `_ByteGenerator` decipher, and return the resulting HLS
+         (m3u8) URL as a downloadable format.
+
+    Returns either:
+      - {"blocked": True, "reason": str}
+      - {"info": {title, thumbnail, duration, formats: [VideoFormat…]}}
+      - None (couldn't determine; fall through to generic yt-dlp error)
     """
     host = (urlparse(url).hostname or "").lower()
-    if "xhamster" not in host:
+    if "xhamster" not in host and "xhms" not in host and "xhday" not in host and "xhvid" not in host:
         return None
+
     headers = {"User-Agent": USER_AGENT, "Accept": "text/html,*/*"}
     try:
         async with httpx.AsyncClient(
-            follow_redirects=True, timeout=10.0, headers=headers
+            follow_redirects=True, timeout=12.0, headers=headers
         ) as http:
             r = await http.get(_rewrite_url(url))
             if r.status_code >= 400:
@@ -257,7 +272,9 @@ async def _probe_xhamster_flag(url: str) -> Optional[str]:
 
     import json as _json
 
-    m = re.search(r"window\.initials\s*=\s*(\{.*?\});", body, re.S)
+    m = re.search(r"window\.initials\s*=\s*(\{.+?\})\s*;\s*</script>", body, re.S)
+    if not m:
+        m = re.search(r"window\.initials\s*=\s*(\{.+?\})\s*;", body, re.S)
     if not m:
         return None
     try:
@@ -266,18 +283,111 @@ async def _probe_xhamster_flag(url: str) -> Optional[str]:
         return None
 
     ve = data.get("videoEntity") or {}
-    is_downloadable = ve.get("isDownloadable")
-    is_geo = ve.get("isGeoBlocked")
-    if is_downloadable is False:
-        title = ve.get("title") or "this video"
-        return (
-            f"The site has explicitly disabled downloads for “{title}”. "
-            f"XHamster protects such videos with encrypted stream URLs — "
-            f"VidVault doesn't bypass a site's own download restrictions."
+    if ve.get("isGeoBlocked"):
+        return {
+            "blocked": True,
+            "reason": "This video is geo-restricted by the site and can't be downloaded from this region.",
+        }
+
+    xp = ((data.get("xplayerSettings") or {}).get("sources") or {})
+    hls_h264 = ((xp.get("hls") or {}).get("h264") or {})
+    hls_cipher = hls_h264.get("url") or hls_h264.get("fallback")
+
+    try:
+        from yt_dlp.extractor.xhamster import _ByteGenerator  # type: ignore
+    except Exception:
+        return None
+
+    def decipher(hex_string: str) -> Optional[str]:
+        if not hex_string or not re.fullmatch(r"[0-9a-fA-F]{12,}", hex_string):
+            return None
+        try:
+            byte_data = bytes.fromhex(hex_string)
+            seed = int.from_bytes(byte_data[1:5], byteorder="little", signed=True)
+            gen = _ByteGenerator(byte_data[0], seed)
+            return bytearray(b ^ next(gen) for b in byte_data[5:]).decode("latin-1")
+        except Exception:
+            return None
+
+    formats: List[VideoFormat] = []
+    # Public backend URL for building HLS-proxy links the mobile client can hit.
+    proxy_base = os.environ.get("EXPO_PUBLIC_BACKEND_URL") or ""
+
+    def _proxy(m3u8: str) -> str:
+        """If we have a public backend URL, wrap the HLS stream in our
+        remux endpoint so the client downloads a single MP4."""
+        if not proxy_base:
+            return m3u8
+        return f"{proxy_base}/api/hls_stream?token={_encode_hls_ref(m3u8, referer='https://xhamster.com/')}"
+
+    # Try each progressive quality first (usually a per-quality HLS manifest).
+    for f in ((xp.get("standard") or {}).get("h264") or []):
+        if not isinstance(f, dict):
+            continue
+        cipher = f.get("url") or f.get("fallback")
+        if not cipher:
+            continue
+        media_url = decipher(cipher)
+        if not media_url or not media_url.startswith("http"):
+            continue
+        quality = f.get("label") or f.get("quality") or ""
+        if quality.lower() == "auto":
+            # Skip the master "auto" variant — the per-quality entries are more
+            # useful for a downloader.
+            continue
+        formats.append(
+            VideoFormat(
+                id=f"h264-{quality or 'auto'}",
+                label=f"{quality} MP4" if quality else "MP4",
+                ext="mp4",
+                mime="video/mp4",
+                size_bytes=None,
+                url=_proxy(media_url),
+                kind="video",
+            )
         )
-    if is_geo:
-        return "This video is geo-restricted by the site and can't be downloaded from this region."
-    return None
+
+    # Fallback: master HLS playlist (auto quality)
+    if not formats and hls_cipher:
+        m3u8 = decipher(hls_cipher)
+        if m3u8 and m3u8.startswith("http"):
+            formats.append(
+                VideoFormat(
+                    id="hls-auto",
+                    label=f"Best available ({ve.get('maxResolution') or 'HLS'})",
+                    ext="mp4",
+                    mime="video/mp4",
+                    size_bytes=None,
+                    url=_proxy(m3u8),
+                    kind="video",
+                )
+            )
+
+    if not formats:
+        return None
+
+    title = ve.get("title") or _title_from_filename(url) or host
+    thumb = None
+    thumbs = ve.get("thumbs") or {}
+    if isinstance(thumbs, dict):
+        # Prefer the highest-numbered frame available
+        for key in sorted(thumbs.keys(), key=lambda k: int(k) if str(k).isdigit() else 0, reverse=True):
+            v = thumbs.get(key)
+            if isinstance(v, str) and v.startswith("http"):
+                thumb = v
+                break
+
+    return {
+        "info": {
+            "title": title,
+            "author": (ve.get("pornstarModels") or [{}])[0].get("name")
+            if isinstance(ve.get("pornstarModels"), list) and ve.get("pornstarModels")
+            else host,
+            "duration": ve.get("duration"),
+            "thumbnail": thumb,
+            "formats": formats,
+        }
+    }
 
 
 def _friendly_yt_error(raw: Optional[str], host: str) -> str:
@@ -511,16 +621,124 @@ async def analyze(req: AnalyzeRequest):
             source_url=url,
         )
 
-    # 4) Site-specific "download disabled" detector (currently XHamster) —
-    #    honors the site's own restriction flag instead of surfacing the
-    #    raw yt-dlp traceback.
-    site_reason = await _probe_xhamster_flag(url)
+    # 4) Site-specific extractor (currently XHamster) — either returns a real
+    #    supported response by deciphering the site's encrypted stream URLs,
+    #    honors the site's own `isDownloadable=false` flag, or falls through
+    #    to the generic yt-dlp error message.
+    xh = await _probe_xhamster_flag(url)
+    if xh:
+        if xh.get("info"):
+            info_dict = xh["info"]
+            fmts: List[VideoFormat] = info_dict["formats"]
+            return AnalyzeResponse(
+                supported=True,
+                title=info_dict.get("title") or parsed.netloc,
+                author=info_dict.get("author") or parsed.netloc,
+                duration_sec=info_dict.get("duration"),
+                thumbnail=info_dict.get("thumbnail"),
+                mime=fmts[0].mime,
+                size_bytes=fmts[0].size_bytes,
+                formats=fmts,
+                source_url=url,
+            )
+        if xh.get("blocked"):
+            return AnalyzeResponse(
+                supported=False,
+                reason=xh["reason"],
+                source_url=url,
+            )
 
     return AnalyzeResponse(
         supported=False,
-        reason=site_reason or _friendly_yt_error(yt_error, parsed.netloc),
+        reason=_friendly_yt_error(yt_error, parsed.netloc),
         mime=mime,
         source_url=url,
+    )
+
+
+FFMPEG_BIN = imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def _encode_hls_ref(url: str, referer: Optional[str] = None) -> str:
+    """Pack an HLS URL (+ optional referer) into a URL-safe blob so the client
+    can send it back to /api/hls_stream without needing to escape query args."""
+    payload = url + ("\n" + referer if referer else "")
+    return base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+
+
+def _decode_hls_ref(token: str) -> tuple[str, Optional[str]]:
+    pad = "=" * (-len(token) % 4)
+    raw = base64.urlsafe_b64decode(token + pad).decode()
+    if "\n" in raw:
+        url, ref = raw.split("\n", 1)
+        return url, ref or None
+    return raw, None
+
+
+@api_router.get("/hls_stream")
+async def hls_stream(token: str = Query(..., description="Base64 of the HLS URL")):
+    """
+    Remuxes an HLS (m3u8) stream to a progressive MP4 and streams the bytes
+    back to the client. This lets the mobile app treat the download as a
+    single HTTP file — no client-side HLS logic needed.
+    """
+    try:
+        hls_url, referer = _decode_hls_ref(token)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid token") from None
+
+    if not hls_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Invalid HLS URL")
+
+    headers_line = [f"User-Agent: {USER_AGENT}"]
+    if referer:
+        headers_line.append(f"Referer: {referer}")
+    header_arg = "\r\n".join(headers_line) + "\r\n"
+
+    cmd = [
+        FFMPEG_BIN,
+        "-loglevel", "error",
+        "-headers", header_arg,
+        "-i", hls_url,
+        "-c", "copy",
+        "-bsf:a", "aac_adtstoasc",
+        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        "-f", "mp4",
+        "pipe:1",
+    ]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        bufsize=0,
+    )
+
+    def iterate():
+        try:
+            assert proc.stdout is not None
+            while True:
+                chunk = proc.stdout.read(1 << 15)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    fname = re.sub(r"[^A-Za-z0-9._-]+", "_", (urlparse(hls_url).path.rsplit("/", 1)[-1] or "video"))
+    if not fname.lower().endswith(".mp4"):
+        fname = f"{fname}.mp4"
+    return StreamingResponse(
+        iterate(),
+        media_type="video/mp4",
+        headers={
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "Cache-Control": "no-store",
+        },
     )
 
 
