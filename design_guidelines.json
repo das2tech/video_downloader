@@ -1,0 +1,171 @@
+{
+  "app_name": "Video Downloader",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A fast, trustworthy, and clean utility experience that frames media content gracefully while focusing on high readability.",
+  "color": {
+    "surface": "#F9F8F6",
+    "onSurface": "#1A1918",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1A1918",
+    "surfaceTertiary": "#EAE7E0",
+    "onSurfaceTertiary": "#4A4846",
+    "surfaceInverse": "#1A1918",
+    "onSurfaceInverse": "#F9F8F6",
+    "brand": "#D9534F",
+    "brandPrimary": "#D9534F",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#F2A8A5",
+    "onBrandSecondary": "#1A1918",
+    "brandTertiary": "#F9D5D3",
+    "onBrandTertiary": "#8B302D",
+    "success": "#3A824A",
+    "onSuccess": "#FFFFFF",
+    "warning": "#D99736",
+    "onWarning": "#FFFFFF",
+    "error": "#B83A3A",
+    "onError": "#FFFFFF",
+    "info": "#4A4846",
+    "onInfo": "#FFFFFF",
+    "border": "#EAE7E0",
+    "borderStrong": "#D1CDC5",
+    "divider": "#EAE7E0"
+  },
+  "typography": {
+    "displayFontFamily": "Space Grotesk",
+    "textFontFamily": "Plus Jakarta Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical rhythm. Avoid dense dashboard layouts. Input and buttons use 'lg' padding. Cards sit inside 'lg' screen padding. Content never touches the edge.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": "true",
+    "do's": [
+      "Bottom tab bar (when content scrolls behind it)",
+      "Floating action buttons and sticky header backgrounds",
+      "Modal/scrim entry overlays"
+    ],
+    "dont's": [
+      "Body content cards",
+      "Form inputs",
+      "Standard list rows"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Home",
+      "purpose": "Primary entry point to paste URLs, analyze videos, and see recent history.",
+      "states": {
+        "loading": "Skeleton UI simulating the URL analysis/parsing phase.",
+        "empty": "No recent URLs or favorites found.",
+        "error": "Failed to fetch video details from URL. Showing error snackbar/toast."
+      },
+      "layout": "Use a featured glass-frosted hero area for the URL input. Large, oversized input field with bold paste/clear/analyze actions. Below it, a segmented layout for Recent URLs and Quick access. Ensure bottom CTA (if any) is sticky."
+    },
+    {
+      "name": "Video Info / Analyze Result",
+      "purpose": "Shows parsed video metadata and format options before downloading.",
+      "states": {
+        "loading": "Spinner over thumbnail while resolving formats.",
+        "empty": "N/A",
+        "error": "Error message with 'Retry Analysis' button."
+      },
+      "layout": "Hero image: High-res video thumbnail with a gradient scrim at the bottom containing title/duration. Below hero: A card layout for selecting resolution (1080p, 720p, etc.) and format. Sticky 'Download' CTA anchored at the bottom outside scroll."
+    },
+    {
+      "name": "Downloads List",
+      "purpose": "Manage ongoing and completed downloads.",
+      "states": {
+        "loading": "Skeleton list rows.",
+        "empty": "Illustration of empty folder + 'No active downloads'.",
+        "error": "N/A"
+      },
+      "layout": "Three-line list rows (Title, Status/Speed/Progress Bar, Size). Use Space Grotesk for mono-spaced progress percentages. Distinct icon/state indicators. Clear hierarchy with indented separators."
+    },
+    {
+      "name": "Video Player",
+      "purpose": "Built-in playback of downloaded MP4s.",
+      "states": {
+        "loading": "Buffering spinner in center.",
+        "empty": "N/A",
+        "error": "Unable to play video format."
+      },
+      "layout": "Immersive full-screen player. Dark-first utility feel ONLY inside this screen for cinema mode. Clean play/pause/seek controls floating over a glass scrim."
+    },
+    {
+      "name": "Library (History + Favorites)",
+      "purpose": "Archived downloaded videos and bookmarked URLs.",
+      "states": {
+        "loading": "List skeletons.",
+        "empty": "Minimalist graphic indicating empty history.",
+        "error": "Failed to load database."
+      },
+      "layout": "Top sticky segmented control (glass). Grid or list view toggles. Cards span full width minus padding."
+    },
+    {
+      "name": "Settings",
+      "purpose": "App configurations (theme, download limits, storage).",
+      "states": {
+        "loading": "N/A",
+        "empty": "N/A",
+        "error": "N/A"
+      },
+      "layout": "Grouped list sections with inset 'lg' radius cards on a slightly darker surface. Switches and right chevrons."
+    }
+  ],
+  "images": {
+    "home_hero_bg": {
+      "url": "https://images.pexels.com/photos/3540375/pexels-photo-3540375.jpeg?auto=compress&cs=tinysrgb&w=800",
+      "dark": "https://images.pexels.com/photos/3540375/pexels-photo-3540375.jpeg?auto=compress&cs=tinysrgb&w=800&blend=000000&balph=60",
+      "alt": "Abstract soft terracotta lighting background"
+    },
+    "empty_downloads": {
+      "url": "https://images.pexels.com/photos/8947771/pexels-photo-8947771.jpeg?auto=compress&cs=tinysrgb&w=800",
+      "dark": "https://images.pexels.com/photos/8947771/pexels-photo-8947771.jpeg?auto=compress&cs=tinysrgb&w=800&blend=000000&balph=60",
+      "alt": "Minimalist cardboard folder against a clean background"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Follow '1 iOS-Native Clean' personality: warm sand/stone surfaces, Terracotta (#D9534F) brand accent, clean padding.",
+    "Typography: Use Plus Jakarta Sans for all body and UI text. Use Space Grotesk specifically for Display titles, numbers, progress percentages, and file sizes to give a crisp utility feel.",
+    "Ensure 'Downloads' screen list uses 3-line rows: Title (top), Progress bar + numeric percentage (middle), Status/Size info (bottom).",
+    "Implement glassmorphism on the bottom tabs, floating actions, and sticky headers over scrollable areas. Fall back to solid surfaceSecondary on Android if expo-glass-effect is heavy.",
+    "For the URL analysis header on the Home screen, overlay the input on a soft abstract hero image ('home_hero_bg') with a gradient scrim (top to bottom, transparent to surfaceInverse >70%) to ensure text/icons remain readable.",
+    "Zero Tolerance Rule: Do NOT use any blue/indigo/purple colors in the app. Stick to the Terracotta/Warm Sand palette strictly.",
+    "Make sure the 'Download' CTA on the Video Info screen is a sticky button anchored above the safe area, avoiding overlap with scrolling content."
+  ]
+}
