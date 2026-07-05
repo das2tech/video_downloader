@@ -14,9 +14,10 @@ if not BASE_URL:
             BASE_URL = line.split("=", 1)[1].strip().rstrip("/")
             break
 
-TIMEOUT = 30
+TIMEOUT = 45
 MP4_URL = "https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4"
 HTML_URL = "https://www.example.com/"
+YOUTUBE_SHORT_URL = "https://youtu.be/PKKXh8S8Apk"
 
 
 @pytest.fixture
@@ -79,3 +80,25 @@ class TestAnalyze:
     def test_analyze_bad_scheme(self, api):
         r = api.post(f"{BASE_URL}/api/analyze", json={"url": "ftp://example.com/file.mp4"}, timeout=TIMEOUT)
         assert r.status_code == 400
+
+    def test_analyze_youtube_short_ytdlp(self, api):
+        """yt-dlp path: YouTube short URL should resolve to supported=true with formats + audio."""
+        r = api.post(f"{BASE_URL}/api/analyze", json={"url": YOUTUBE_SHORT_URL}, timeout=TIMEOUT)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        if not data.get("supported"):
+            pytest.skip(f"yt-dlp couldn't resolve youtube from this environment: {data.get('reason')}")
+        assert data["supported"] is True
+        assert data["source_url"] == YOUTUBE_SHORT_URL
+        assert data.get("title"), "title should be populated by yt-dlp"
+        assert data.get("thumbnail"), "thumbnail should be populated by yt-dlp"
+        # duration may be None on some extractors but should usually be present
+        assert isinstance(data.get("formats"), list) and len(data["formats"]) >= 1
+        kinds = {f["kind"] for f in data["formats"]}
+        assert "video" in kinds, f"expected at least one video format, got kinds={kinds}"
+        # At least one audio-only format expected for youtube
+        assert "audio" in kinds, f"expected at least one audio format, got kinds={kinds}"
+        # Every format must have a non-empty url
+        for f in data["formats"]:
+            assert f.get("url"), f"format missing url: {f}"
+

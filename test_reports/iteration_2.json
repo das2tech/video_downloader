@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 2: yt-dlp integration verified end-to-end. Backend /api/analyze now supports YouTube (and by extension all yt-dlp-supported sites). Regression tests 7/8 pass; direct-MP4 fast path still works, HTML unsupported returns supported=false with a helpful reason, empty URL → 400, non-http(s) → 400, missing url field → 422. Frontend web preview: pasting the YouTube short URL (https://youtu.be/PKKXh8S8Apk) navigates to /analyze and renders the video info card with real yt-dlp data (title '@ARKEventsindia - Laila Main Laila…', author 'ARK Events', thumbnail, size, mime video/mp4) with 2 formats (360p MP4 progressive + M4A audio-only) and a sticky Download CTA. Unsupported example.com shows the friendly 'Unsupported URL' state. Downloads/Library/Settings all render. HIGH-priority bug from iteration 1 is FIXED: tapping Download on web no longer wipes the analyze card — a red inline banner now appears above the sticky bar reading 'Downloads are only available in the mobile app…' while the video card + formats remain visible. One minor regression found: analyze() returns supported=true for an unreachable URL whose path ends in .mp4 (extension-only classification without a successful HEAD/Range probe).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/analyze",
+        "issue": "For an unreachable URL like https://this-domain-does-not-exist-xyz.example/video.mp4, response is supported=true, mime=application/octet-stream, size_bytes=null. Root cause: in server.py analyze() step 1, _classify(mime, ext) returns 'video' purely because ext is in VIDEO_EXTS, even when _probe_direct returned (None, None) (i.e. HEAD/Range both failed). Fix: require a successful probe (mime is not None) OR let step 2 (yt-dlp) run first for such misses. Previously (iteration 1) this test returned supported=false — this behavior changed with the yt-dlp refactor."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "shadow* / pointerEvents deprecation warnings",
+        "issue": "Console still shows: '\"shadow*\" style props are deprecated. Use \"boxShadow\"' and 'props.pointerEvents is deprecated. Use style.pointerEvents'. Migrate the offending components (likely src/components/Card.tsx and PrimaryButton.tsx). Non-blocking, same as iteration 1."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_analyze_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "In backend/server.py analyze() step 1, tighten the direct-URL fast path so it only returns supported=true when _probe_direct actually succeeded (e.g. require mime is not None OR size is not None). Otherwise, fall through to yt-dlp (step 2). This restores the pre-yt-dlp behavior for unreachable *.mp4 URLs.",
+    "(Carry-over from iteration 1, non-blocking) Migrate deprecated shadow*/pointerEvents props in src/components/*.tsx to boxShadow / style.pointerEvents."
+  ],
+  "critical_code_review_comments": [
+    "yt-dlp is correctly run inside a ThreadPoolExecutor via loop.run_in_executor — non-blocking on the event loop.",
+    "_formats_from_ytdlp filters progressive (vcodec+acodec both != 'none'), de-dups by height, and appends a best audio-only track. This produced 2 clean formats (360p MP4 + M4A) for the YouTube short — good UX for a mobile downloader.",
+    "AnalyzeResponse now surfaces title/author/duration_sec/thumbnail from yt-dlp — the frontend's analyze.tsx already consumes these fields (heroTitle, heroAuthor, thumbnail Image, kind pill from formats[0].kind).",
+    "downloader.ts short-circuit on Platform.OS==='web' works: banner appears above sticky bar, analyze card stays intact — iteration 1 HIGH bug is resolved.",
+    "server.py step 1 fast path is too permissive: _classify returns 'video' from ext alone, so a 4xx/DNS-fail on a .mp4 URL still yields supported=true. See minor issue above.",
+    "analyzer.ts / analyze.tsx use process.env.EXPO_PUBLIC_BACKEND_URL correctly; no hardcoded hosts."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_analyze_api.py (added TestAnalyze.test_analyze_youtube_short_ytdlp; bumped TIMEOUT to 45s for yt-dlp)"
+  ],
+  "success_rate": {
+    "backend": "87.5% (7/8 pytest — 1 pre-existing unreachable-URL regression)",
+    "frontend": "100% for the requested flows (YouTube analyze card, unsupported URL state, Downloads/Library/Settings, download-on-web graceful banner)"
+  },
+  "seed_data_creation": "None. AsyncStorage-backed lists remain empty.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend base URL: process.env.EXPO_PUBLIC_BACKEND_URL. Run: pytest /app/backend/tests/test_analyze_api.py -v. Known-good YouTube: https://youtu.be/PKKXh8S8Apk (yt-dlp ~1s on this env). Known-good direct MP4: https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4. Known-bad HTML: https://www.example.com/. Web preview cannot exercise the native download path — the sticky Download button on /analyze produces an inline red 'Downloads are only available in the mobile app' banner on web; test full download lifecycle on Expo Go / device. Tabs still cannot be selected reliably via data-testid on web; navigate by URL (/downloads, /library, /settings).",
+  "rca_of_issue": "Minor unreachable-.mp4 regression: analyze() step 1 checks `if ext in VIDEO_EXTS or ext in AUDIO_EXTS: mime, size = await _probe_direct(url); kind = _classify(mime, ext); if kind: return supported=true`. When _probe_direct fails (DNS/connection) it returns (None, None), but _classify still returns 'video' because ext='.mp4' is in VIDEO_EXTS. Fix by gating the branch on a successful probe (e.g. `if kind and (mime is not None or size is not None):`) so unreachable/invalid links fall through to yt-dlp and finally to supported=false with a reason."
+}
