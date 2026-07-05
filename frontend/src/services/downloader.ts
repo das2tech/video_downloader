@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { Platform } from 'react-native';
 
 import { actions } from '../store/app-store';
 import type { DownloadItem, VideoFormat } from '../types';
@@ -65,6 +66,11 @@ export type StartOptions = {
 };
 
 export async function startDownload(opts: StartOptions): Promise<DownloadItem> {
+  if (Platform.OS === 'web') {
+    throw new Error(
+      'Downloads are only available in the mobile app. Please open VidVault on your phone via Expo Go or a build.',
+    );
+  }
   await ensureDir();
   const filename = buildFileName(opts.title, opts.format.ext, opts.id);
   const fileUri = `${DOWNLOAD_DIR()}${filename}`;

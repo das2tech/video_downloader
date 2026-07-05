@@ -38,6 +38,7 @@ export default function AnalyzeScreen() {
 
   const [selectedFormatId, setSelectedFormatId] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!url) return;
@@ -71,6 +72,7 @@ export default function AnalyzeScreen() {
   const onDownload = useCallback(async () => {
     if (!data || !selectedFormat) return;
     setDownloading(true);
+    setDownloadError(null);
     const id = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const title = data.title || 'Video';
     try {
@@ -93,7 +95,7 @@ export default function AnalyzeScreen() {
       router.replace('/(tabs)/downloads');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setState({ kind: 'error', message });
+      setDownloadError(message);
     } finally {
       setDownloading(false);
     }
@@ -277,22 +279,32 @@ export default function AnalyzeScreen() {
 
           {/* Sticky download CTA */}
           <View style={styles.stickyBar} testID="analyze-sticky-bar">
-            <View style={{ flex: 1 }}>
-              <Text style={styles.stickyLabel}>
-                {selectedFormat?.label ?? 'Selected format'}
-              </Text>
-              <Text style={styles.stickyValue}>
-                {formatBytes(selectedFormat?.size_bytes ?? null)}
-              </Text>
+            {downloadError ? (
+              <View style={styles.downloadErrorBanner} testID="analyze-download-error">
+                <Ionicons name="warning" size={16} color={colors.onError} />
+                <Text style={styles.downloadErrorText} numberOfLines={2}>
+                  {downloadError}
+                </Text>
+              </View>
+            ) : null}
+            <View style={styles.stickyRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.stickyLabel}>
+                  {selectedFormat?.label ?? 'Selected format'}
+                </Text>
+                <Text style={styles.stickyValue}>
+                  {formatBytes(selectedFormat?.size_bytes ?? null)}
+                </Text>
+              </View>
+              <PrimaryButton
+                label={downloading ? 'Starting…' : 'Download'}
+                icon="cloud-download"
+                size="lg"
+                onPress={onDownload}
+                disabled={downloading || !selectedFormat}
+                testID="analyze-download-button"
+              />
             </View>
-            <PrimaryButton
-              label={downloading ? 'Starting…' : 'Download'}
-              icon="cloud-download"
-              size="lg"
-              onPress={onDownload}
-              disabled={downloading || !selectedFormat}
-              testID="analyze-download-button"
-            />
           </View>
         </>
       )}
@@ -493,9 +505,27 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     padding: spacing.lg,
     paddingBottom: spacing.xl,
+    gap: spacing.sm,
+  },
+  stickyRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
+  },
+  downloadErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.error,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+  },
+  downloadErrorText: {
+    color: colors.onError,
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+    flex: 1,
   },
   stickyLabel: {
     fontSize: fontSize.xs,
