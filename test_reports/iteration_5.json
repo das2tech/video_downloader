@@ -1,0 +1,34 @@
+{
+  "summary": "Backend-only retest for VidVault iteration 5 (site-flag detector _probe_xhamster_flag). All 9 pytest cases pass (9/9). The new detector runs correctly: POST /api/analyze on https://hi.xhamster.desi/videos/8-9166610 returns supported=false with reason='The site has explicitly disabled downloads for “Vintage mother 8”. XHamster protects such videos with encrypted stream URLs — VidVault doesn't bypass a site's own download restrictions.' — proving the initials JSON was parsed, the title was extracted, and the site-flag reason takes precedence over the generic 'extractor couldn't find a playable stream' message. Regressions verified: YouTube short (supported=true, video+audio formats), direct MP4 (supported=true, video/mp4, size_bytes>0), example.com (supported=false, generic reason, xhamster branch NOT triggered), empty url→400, missing url field→422, ftp://→400.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_analyze_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py _probe_xhamster_flag() runs strictly AFTER the yt-dlp path fails (analyze() step 4), and its return value takes precedence over _friendly_yt_error() via 'site_reason or _friendly_yt_error(...)'. Verified end-to-end against hi.xhamster.desi — behavior matches the review request exactly.",
+    "Timebox: httpx.AsyncClient(timeout=10.0) inside _probe_xhamster_flag limits the additional latency to ≤10s as requested. Total analyze() latency for hi.xhamster.desi is bounded and observed <7s in this run.",
+    "Host guard: `if 'xhamster' not in host: return None` correctly scopes the detector — example.com regression test confirms the branch does NOT run for non-xhamster hosts (reason stays generic).",
+    "Regex `window\\.initials\\s*=\\s*(\\{.*?\\});` with re.S is non-greedy and safe against multi-blob pages; json parse is guarded with try/except so a schema change degrades to the generic yt-dlp message rather than 500.",
+    "No mongodb _id serialization risk in this endpoint. No hardcoded URLs; EXPO_PUBLIC_BACKEND_URL used from env in tests. server.py is 547 lines — within limits."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_analyze_api.py (strengthened test_analyze_xhamster_desi_friendly_error to assert 'disabled downloads' and the site title 'Vintage mother 8' are present in the reason, and that the older 'extractor couldn't find a playable stream' phrase is NOT present)"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Public URL is EXPO_PUBLIC_BACKEND_URL from /app/frontend/.env (https://video-fetch-74.preview.emergentagent.com). Test file: /app/backend/tests/test_analyze_api.py (9 cases). Actual reason string produced by _probe_xhamster_flag() for hi.xhamster.desi/videos/8-9166610 (verified via curl): 'The site has explicitly disabled downloads for “Vintage mother 8”. XHamster protects such videos with encrypted stream URLs — VidVault doesn't bypass a site's own download restrictions.'",
+  "rca_of_issue": "N/A — feature verification pass. All items in the review request are green."
+}

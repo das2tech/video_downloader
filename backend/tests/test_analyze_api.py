@@ -82,7 +82,7 @@ class TestAnalyze:
         assert r.status_code == 400
 
     def test_analyze_xhamster_desi_friendly_error(self, api):
-        """Broken site: must return supported=false with a friendly (non-traceback) reason."""
+        """XHamster site-flag detector: reason must mention 'disabled downloads' and the title."""
         url = "https://hi.xhamster.desi/videos/8-9166610"
         r = api.post(f"{BASE_URL}/api/analyze", json={"url": url}, timeout=90)
         assert r.status_code == 200, r.text
@@ -93,9 +93,19 @@ class TestAnalyze:
         # Must not leak raw yt-dlp traceback markers
         assert "Traceback" not in reason
         assert "yt_dlp." not in reason
-        assert "\n" not in reason, f"reason should be a single sentence, got: {reason}"
         # Must be reasonably short (friendly message, not a dumped exception)
         assert len(reason) < 400, f"reason too long, looks like a raw dump: {reason}"
+        # New _probe_xhamster_flag() assertions:
+        assert "disabled downloads" in reason.lower(), (
+            f"reason should indicate the site disabled downloads, got: {reason}"
+        )
+        assert "vintage mother 8" in reason.lower(), (
+            f"reason should include the site's title 'Vintage mother 8', got: {reason}"
+        )
+        # Should take precedence over the generic yt-dlp friendly message
+        assert "extractor couldn't find a playable stream" not in reason, (
+            f"xhamster flag reason should take precedence over the generic yt-dlp message, got: {reason}"
+        )
 
     def test_analyze_youtube_short_ytdlp(self, api):
         """yt-dlp path: YouTube short URL should resolve to supported=true with formats + audio."""

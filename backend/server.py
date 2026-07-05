@@ -230,6 +230,56 @@ async def _yt_extract(url: str) -> tuple[Optional[Dict[str, Any]], Optional[str]
     return await loop.run_in_executor(YT_EXECUTOR, _yt_extract_sync, url)
 
 
+async def _probe_xhamster_flag(url: str) -> Optional[str]:
+    """
+    XHamster (and its mirrors) embed a `window.initials = {...}` blob that
+    contains `videoEntity.isDownloadable`. When the site marks a video as
+    non-downloadable, that's an explicit "download disabled by the site"
+    signal we should honor — we don't try to break their obfuscation.
+
+    Returns a user-facing reason string when downloads are blocked, or None
+    if the flag can't be read (in which case the generic yt-dlp error stands).
+    """
+    host = (urlparse(url).hostname or "").lower()
+    if "xhamster" not in host:
+        return None
+    headers = {"User-Agent": USER_AGENT, "Accept": "text/html,*/*"}
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True, timeout=10.0, headers=headers
+        ) as http:
+            r = await http.get(_rewrite_url(url))
+            if r.status_code >= 400:
+                return None
+            body = r.text
+    except Exception:
+        return None
+
+    import json as _json
+
+    m = re.search(r"window\.initials\s*=\s*(\{.*?\});", body, re.S)
+    if not m:
+        return None
+    try:
+        data = _json.loads(m.group(1))
+    except Exception:
+        return None
+
+    ve = data.get("videoEntity") or {}
+    is_downloadable = ve.get("isDownloadable")
+    is_geo = ve.get("isGeoBlocked")
+    if is_downloadable is False:
+        title = ve.get("title") or "this video"
+        return (
+            f"The site has explicitly disabled downloads for “{title}”. "
+            f"XHamster protects such videos with encrypted stream URLs — "
+            f"VidVault doesn't bypass a site's own download restrictions."
+        )
+    if is_geo:
+        return "This video is geo-restricted by the site and can't be downloaded from this region."
+    return None
+
+
 def _friendly_yt_error(raw: Optional[str], host: str) -> str:
     """Turn a yt-dlp exception message into something the user can act on."""
     if not raw:
@@ -461,9 +511,14 @@ async def analyze(req: AnalyzeRequest):
             source_url=url,
         )
 
+    # 4) Site-specific "download disabled" detector (currently XHamster) —
+    #    honors the site's own restriction flag instead of surfacing the
+    #    raw yt-dlp traceback.
+    site_reason = await _probe_xhamster_flag(url)
+
     return AnalyzeResponse(
         supported=False,
-        reason=_friendly_yt_error(yt_error, parsed.netloc),
+        reason=site_reason or _friendly_yt_error(yt_error, parsed.netloc),
         mime=mime,
         source_url=url,
     )
