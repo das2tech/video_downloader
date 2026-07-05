@@ -305,7 +305,9 @@ async def analyze(req: AnalyzeRequest):
     #    and works for any user-authorized .mp4/.m3u8/.mp3 link.
     if ext in VIDEO_EXTS or ext in AUDIO_EXTS:
         mime, size = await _probe_direct(url)
-        kind = _classify(mime, ext)
+        # Only trust the direct path when the probe actually succeeded.
+        # Otherwise fall through to yt-dlp / unsupported response.
+        kind = _classify(mime, ext) if (mime or size) else None
         if kind:
             title = _title_from_filename(name) or parsed.netloc
             resolved_ext = ext.lstrip(".") if ext else (
@@ -356,7 +358,7 @@ async def analyze(req: AnalyzeRequest):
 
     # 3) Last-ditch: maybe it's a direct file the URL didn't hint at
     mime, size = await _probe_direct(url)
-    kind = _classify(mime, ext)
+    kind = _classify(mime, ext) if (mime or size) else None
     if kind:
         title = _title_from_filename(name) or parsed.netloc
         resolved_ext = (ext or ("." + (mime or "").split("/")[-1].split(";")[0])).lstrip(".")
