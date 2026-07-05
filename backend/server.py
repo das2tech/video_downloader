@@ -92,6 +92,35 @@ USER_AGENT = (
 )
 
 
+# Common domain mirrors that yt-dlp's site-specific extractors don't recognize
+# by TLD alone. Rewriting to the canonical host before extraction lets the
+# per-site extractor (which has custom decryption / auth) kick in instead of
+# the "generic" fallback.
+DOMAIN_MIRRORS: Dict[str, str] = {
+    "xhamster.desi": "xhamster.com",
+    "xhamster2.com": "xhamster.com",
+    "xhamster3.com": "xhamster.com",
+    "en.xhamster.com": "xhamster.com",
+    "hi.xhamster.desi": "xhamster.com",
+    "youtube-nocookie.com": "youtube.com",
+    "www.youtube-nocookie.com": "www.youtube.com",
+    "m.youtube.com": "www.youtube.com",
+    "music.youtube.com": "www.youtube.com",
+}
+
+
+def _rewrite_url(url: str) -> str:
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    replacement = DOMAIN_MIRRORS.get(host.lower())
+    if not replacement:
+        return url
+    new_netloc = replacement
+    if parsed.port:
+        new_netloc = f"{replacement}:{parsed.port}"
+    return parsed._replace(netloc=new_netloc).geturl()
+
+
 def _guess_from_url(url: str) -> tuple[Optional[str], Optional[str]]:
     try:
         path = urlparse(url).path
@@ -165,7 +194,8 @@ async def _probe_direct(url: str) -> tuple[Optional[str], Optional[int]]:
 # -----------------------------
 
 
-def _yt_extract_sync(url: str) -> Optional[Dict[str, Any]]:
+def _yt_extract_sync(url: str) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Returns (info, last_error). One of them will be populated."""
     opts = {
         "quiet": True,
         "no_warnings": True,
@@ -174,23 +204,73 @@ def _yt_extract_sync(url: str) -> Optional[Dict[str, Any]]:
         "extract_flat": False,
         "noplaylist": True,
         "socket_timeout": 15,
+        "format": "best[protocol^=http]/best",
+        "user_agent": USER_AGENT,
     }
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            # If it's a playlist, take the first entry
-            if info and info.get("_type") == "playlist":
-                entries = info.get("entries") or []
-                info = entries[0] if entries else None
-            return info
-    except Exception as exc:
-        logging.info("yt-dlp extract failed for %s: %s", url, exc)
-        return None
+    last_error: Optional[str] = None
+    for candidate in (_rewrite_url(url), url):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(candidate, download=False)
+                if info and info.get("_type") == "playlist":
+                    entries = info.get("entries") or []
+                    info = entries[0] if entries else None
+                if info:
+                    return info, None
+        except Exception as exc:
+            last_error = str(exc)
+            logging.info("yt-dlp extract failed for %s: %s", candidate, exc)
+        if candidate == url:
+            break
+    return None, last_error
 
 
-async def _yt_extract(url: str) -> Optional[Dict[str, Any]]:
+async def _yt_extract(url: str) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(YT_EXECUTOR, _yt_extract_sync, url)
+
+
+def _friendly_yt_error(raw: Optional[str], host: str) -> str:
+    """Turn a yt-dlp exception message into something the user can act on."""
+    if not raw:
+        return (
+            f"We couldn't find any downloadable video or audio at {host}. "
+            "The page may be behind login, DRM-protected, geo-blocked, or "
+            "removed."
+        )
+    lowered = raw.lower()
+    if "no video formats found" in lowered:
+        return (
+            f"{host} loaded but the extractor couldn't find a playable stream. "
+            "This usually means the site changed recently — try again in a "
+            "few days after yt-dlp updates, or use a different source."
+        )
+    if "unsupported url" in lowered:
+        return (
+            f"{host} isn't supported. If it's a mirror, try the main site's "
+            "URL. If the page has a share link, use that instead."
+        )
+    if "sign in" in lowered or "login" in lowered or "requires authentication" in lowered:
+        return (
+            f"{host} requires you to be signed in to view this video. This "
+            "app doesn't support login-gated content."
+        )
+    if "private" in lowered or "premium" in lowered or "paid" in lowered:
+        return f"This video on {host} is private or paid — it can't be downloaded."
+    if "drm" in lowered or "widevine" in lowered:
+        return "This video is DRM-protected and cannot be downloaded."
+    if "geo" in lowered or "not available in your country" in lowered:
+        return "This video is geo-restricted and blocked from this server's region."
+    if "http error 4" in lowered or "unable to download webpage" in lowered:
+        return (
+            f"Couldn't reach {host}. Check the URL, your connection, or try "
+            "again in a moment."
+        )
+    # Strip huge traces from the raw error
+    short = raw.split(";")[0].strip()
+    if len(short) > 160:
+        short = short[:157] + "…"
+    return f"Couldn't extract this video: {short}"
 
 
 def _formats_from_ytdlp(info: Dict[str, Any]) -> List[VideoFormat]:
@@ -340,7 +420,7 @@ async def analyze(req: AnalyzeRequest):
 
     # 2) Otherwise, delegate to yt-dlp (YouTube, Instagram, TikTok, FB, X,
     #    Reddit, Vimeo, SoundCloud… ~1000+ sites).
-    info = await _yt_extract(url)
+    info, yt_error = await _yt_extract(url)
     if info:
         formats = _formats_from_ytdlp(info)
         if formats:
@@ -383,11 +463,7 @@ async def analyze(req: AnalyzeRequest):
 
     return AnalyzeResponse(
         supported=False,
-        reason=(
-            "We couldn't find any downloadable video or audio at this URL. "
-            "This can happen if the content is DRM-protected, requires login, "
-            "was removed, or the site isn't supported."
-        ),
+        reason=_friendly_yt_error(yt_error, parsed.netloc),
         mime=mime,
         source_url=url,
     )

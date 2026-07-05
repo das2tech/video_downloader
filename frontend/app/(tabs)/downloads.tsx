@@ -246,8 +246,12 @@ function statusLine(item: DownloadItem): string {
     }
     case 'paused':
       return `Paused · ${formatBytes(written)} / ${formatBytes(size || null)}`;
-    case 'completed':
-      return `Completed · ${formatBytes(size || written || null)}`;
+    case 'completed': {
+      const parts = [`Completed · ${formatBytes(size || written || null)}`];
+      if (item.saved_to_gallery) parts.push('Saved to Gallery');
+      else if (item.gallery_error) parts.push(item.gallery_error);
+      return parts.join(' · ');
+    }
     case 'failed':
       return `Failed${item.error ? ` · ${item.error}` : ''}`;
     case 'cancelled':

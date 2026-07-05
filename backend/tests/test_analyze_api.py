@@ -81,6 +81,22 @@ class TestAnalyze:
         r = api.post(f"{BASE_URL}/api/analyze", json={"url": "ftp://example.com/file.mp4"}, timeout=TIMEOUT)
         assert r.status_code == 400
 
+    def test_analyze_xhamster_desi_friendly_error(self, api):
+        """Broken site: must return supported=false with a friendly (non-traceback) reason."""
+        url = "https://hi.xhamster.desi/videos/8-9166610"
+        r = api.post(f"{BASE_URL}/api/analyze", json={"url": url}, timeout=90)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["supported"] is False
+        reason = data.get("reason") or ""
+        assert reason, "reason must be present"
+        # Must not leak raw yt-dlp traceback markers
+        assert "Traceback" not in reason
+        assert "yt_dlp." not in reason
+        assert "\n" not in reason, f"reason should be a single sentence, got: {reason}"
+        # Must be reasonably short (friendly message, not a dumped exception)
+        assert len(reason) < 400, f"reason too long, looks like a raw dump: {reason}"
+
     def test_analyze_youtube_short_ytdlp(self, api):
         """yt-dlp path: YouTube short URL should resolve to supported=true with formats + audio."""
         r = api.post(f"{BASE_URL}/api/analyze", json={"url": YOUTUBE_SHORT_URL}, timeout=TIMEOUT)

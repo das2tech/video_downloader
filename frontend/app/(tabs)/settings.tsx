@@ -72,6 +72,13 @@ export default function SettingsScreen() {
             onValueChange={(v) => actions.updateSettings({ autoRetry: v })}
             testID="setting-auto-retry"
           />
+          <Divider />
+          <ToggleRow
+            label="Save downloads to phone Gallery"
+            value={s.saveToGallery}
+            onValueChange={(v) => actions.updateSettings({ saveToGallery: v })}
+            testID="setting-save-to-gallery"
+          />
         </Section>
 
         <Section title="General">

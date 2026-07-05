@@ -44,6 +44,9 @@ export type DownloadItem = {
   error?: string | null;
   created_at: number;
   completed_at?: number | null;
+  // Set after we copy the file into the OS media library (Photos / Gallery).
+  saved_to_gallery?: boolean;
+  gallery_error?: string | null;
   // Runtime-only (not persisted)
   speed_bps?: number;
 };
@@ -73,4 +76,5 @@ export type Settings = {
   wifiOnly: boolean;
   clipboardDetection: boolean;
   autoRetry: boolean;
+  saveToGallery: boolean;
 };

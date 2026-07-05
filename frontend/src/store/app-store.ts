@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS: Settings = {
   wifiOnly: false,
   clipboardDetection: true,
   autoRetry: true,
+  saveToGallery: true,
 };
 
 const KEY = '@video_downloader/state_v1';
@@ -99,6 +100,11 @@ function subscribe(cb: () => void) {
 }
 
 function getSnapshot() {
+  return snapshot;
+}
+
+/** Synchronous read of the current state — safe to call from services. */
+export function getState() {
   return snapshot;
 }
 

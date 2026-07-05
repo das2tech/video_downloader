@@ -10,7 +10,11 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.videofetch.mqf2w3"
+      "bundleIdentifier": "com.emergent.videofetch.mqf2w3",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Save downloaded videos to your Photos.",
+        "NSPhotoLibraryAddUsageDescription": "Save downloaded videos to your Photos."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +22,12 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.videofetch.mqf2w3"
+      "package": "com.emergent.videofetch.mqf2w3",
+      "permissions": [
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_IMAGES"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -36,7 +45,15 @@
           "backgroundColor": "#000000"
         }
       ],
-      "expo-video"
+      "expo-video",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Save downloaded videos to your Photos.",
+          "savePhotosPermission": "Save downloaded videos to your Photos.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

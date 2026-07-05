@@ -1,8 +1,11 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library';
 import { Platform } from 'react-native';
 
-import { actions } from '../store/app-store';
+import { actions, getState } from '../store/app-store';
 import type { DownloadItem, VideoFormat } from '../types';
+
+const GALLERY_ALBUM = 'VidVault';
 
 // Directory where all downloads live.
 const DOWNLOAD_DIR = () => `${FileSystem.documentDirectory}downloads/`;
@@ -120,6 +123,8 @@ async function runResumable(
         completed_at: Date.now(),
         speed_bps: 0,
       });
+      // Fire-and-forget gallery export (respects user setting).
+      void exportToGallery(id, result.uri);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -134,6 +139,61 @@ async function runResumable(
     void fileUri;
   } finally {
     live.delete(id);
+  }
+}
+
+/**
+ * Copy a completed download into the phone's media library (Photos on iOS,
+ * shared Movies/Music on Android) inside a "VidVault" album so users see
+ * their downloads in the native Gallery / Files app.
+ *
+ * Silently skips on the web preview. Respects the user's `saveToGallery`
+ * setting. Handles permissions per the app's permission contract: contextual
+ * prompt, single retry, then fall back to a friendly error banner (the UI
+ * surfaces it and offers "Open Settings").
+ */
+export async function exportToGallery(
+  id: string,
+  localUri: string,
+): Promise<void> {
+  if (Platform.OS === 'web') return;
+
+  const wants = getState().settings?.saveToGallery ?? true;
+  if (!wants) return;
+
+  try {
+    const perm = await MediaLibrary.getPermissionsAsync();
+    let granted = perm.granted;
+    if (!granted && perm.canAskAgain) {
+      const req = await MediaLibrary.requestPermissionsAsync();
+      granted = req.granted;
+    }
+    if (!granted) {
+      actions.patchDownload(id, {
+        gallery_error:
+          'Gallery permission denied. Open Settings → Permissions to allow media access.',
+      });
+      return;
+    }
+
+    const asset = await MediaLibrary.createAssetAsync(localUri);
+    try {
+      const album = await MediaLibrary.getAlbumAsync(GALLERY_ALBUM);
+      if (album) {
+        await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+      } else {
+        await MediaLibrary.createAlbumAsync(GALLERY_ALBUM, asset, false);
+      }
+    } catch {
+      // Album ops can fail on iOS if user only granted "limited" access;
+      // the asset is already saved to the library, so treat as success.
+    }
+    actions.patchDownload(id, { saved_to_gallery: true, gallery_error: null });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    actions.patchDownload(id, {
+      gallery_error: `Couldn't save to Gallery: ${message}`,
+    });
   }
 }
 
